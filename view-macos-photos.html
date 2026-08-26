@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact Sheet — local photo &amp; video viewer</title>
+<style>
+  :root{
+    --ink:#0c0d0f; --ink-raised:#16181c; --edge:#2a2e35;
+    --paper:#eceef2; --paper-dim:#868d99; --safelight:#e0a458; --live:#7fb2d9;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--ink); color:var(--paper); font-family:var(--sans);
+       -webkit-font-smoothing:antialiased; overflow-y:scroll}
+  button,select,input{font:inherit; color:inherit}
+  button{cursor:pointer}
+
+  header{position:sticky; top:0; z-index:40; border-bottom:1px solid var(--edge);
+         background:color-mix(in srgb, var(--ink) 88%, transparent);
+         backdrop-filter:saturate(140%) blur(12px)}
+  .edge{height:9px; opacity:.55;
+        background-image:repeating-linear-gradient(90deg,var(--edge) 0 10px,transparent 10px 26px)}
+  .bar{display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; padding:12px 20px}
+  .mark{font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase;
+        color:var(--safelight); white-space:nowrap}
+  .btn{background:var(--ink-raised); border:1px solid var(--edge); border-radius:2px;
+       padding:7px 14px; font-size:13px; transition:border-color .15s,background .15s}
+  .btn:hover{border-color:var(--paper-dim)}
+  .btn.primary{border-color:var(--safelight); color:var(--safelight)}
+  .btn.primary:hover{background:color-mix(in srgb,var(--safelight) 12%,transparent)}
+  .seg{display:flex; border:1px solid var(--edge); border-radius:2px; overflow:hidden}
+  .seg button{background:transparent; border:0; padding:7px 13px; font-family:var(--mono);
+              font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--paper-dim)}
+  .seg button[aria-pressed="true"]{background:var(--ink-raised); color:var(--paper)}
+  select{background:var(--ink-raised); border:1px solid var(--edge); border-radius:2px;
+         padding:7px 10px; font-family:var(--mono); font-size:11px; letter-spacing:.08em}
+  label.check{font-family:var(--mono); font-size:11px; letter-spacing:.06em; color:var(--paper-dim);
+              display:flex; align-items:center; gap:7px; cursor:pointer; white-space:nowrap}
+  .count{margin-left:auto; font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+         color:var(--paper-dim); white-space:nowrap}
+  .count b{color:var(--paper); font-weight:600}
+
+  .empty{max-width:600px; margin:12vh auto; padding:0 24px}
+  .empty h1{font-family:var(--mono); font-weight:500; font-size:clamp(26px,5vw,40px);
+            letter-spacing:-.02em; margin:0 0 8px}
+  .empty h1 span{color:var(--safelight)}
+  .empty p{color:var(--paper-dim); line-height:1.65; font-size:14px; margin:0 0 16px}
+  .empty code{font-family:var(--mono); color:var(--paper); font-size:12px}
+  .empty ul{color:var(--paper-dim); font-size:13px; line-height:1.9; padding-left:18px; margin:18px 0 0}
+
+  #sheet{display:grid; gap:26px 14px; padding:24px 20px 60px;
+         grid-template-columns:repeat(auto-fill,minmax(168px,1fr))}
+  .cell{display:block; text-align:left; padding:0; background:none; border:0}
+  .well{position:relative; aspect-ratio:1; background:#000; border:1px solid var(--edge);
+        overflow:hidden; transition:border-color .15s}
+  .cell:hover .well,.cell:focus-visible .well{border-color:var(--safelight)}
+  .cell:focus-visible{outline:none}
+  .well img,.well video{width:100%; height:100%; object-fit:cover; display:block;
+                        opacity:0; transition:opacity .35s ease}
+  .well.ready img,.well.ready video{opacity:1}
+  .marks{position:absolute; left:6px; bottom:6px; right:6px; display:flex; gap:4px;
+         flex-wrap:wrap; justify-content:flex-end; pointer-events:none}
+  .tag{font-family:var(--mono); font-size:9px; letter-spacing:.12em; padding:2px 5px;
+       background:rgba(0,0,0,.66); border:1px solid rgba(255,255,255,.2); color:var(--paper)}
+  .tag.live{color:var(--live); border-color:color-mix(in srgb,var(--live) 55%,transparent)}
+  .tag.edit{color:var(--safelight); border-color:color-mix(in srgb,var(--safelight) 55%,transparent)}
+  .dud{position:absolute; inset:0; display:grid; place-content:center; gap:6px; padding:12px;
+       font-family:var(--mono); font-size:10px; line-height:1.5; text-align:center; color:var(--paper-dim)}
+  .stub{display:flex; gap:8px; padding:7px 1px 0; font-family:var(--mono); font-size:10px; color:var(--paper-dim)}
+  .stub .n{color:var(--safelight); flex:none}
+  .stub .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+
+  #viewer{position:fixed; inset:0; z-index:100; background:#000; display:none}
+  #viewer[data-open="1"]{display:grid; grid-template-rows:minmax(0,1fr) auto}
+  .stage{position:relative; display:grid; place-items:center; overflow:hidden; min-height:0}
+  .stage img,.stage video,.stage canvas{
+    position:absolute; inset:0; z-index:1; width:100%; height:100%; object-fit:contain;
+    image-orientation:from-image; display:block; background:#000}
+  .stage .dud{position:static; font-size:12px; z-index:2}
+  .nav{position:absolute; top:0; bottom:70px; width:18%; min-width:56px; z-index:3;
+       background:none; border:0; opacity:0; transition:opacity .2s;
+       display:grid; place-items:center; color:var(--paper); font-family:var(--mono); font-size:22px}
+  .nav:hover,.nav:focus-visible{opacity:.85; outline:none}
+  .nav.prev{left:0; justify-items:start; padding-left:18px}
+  .nav.next{right:0; justify-items:end; padding-right:18px}
+
+  .panel{position:absolute; top:14px; right:14px; z-index:4; width:min(340px,calc(100% - 28px));
+         max-height:calc(100% - 28px); overflow:auto; display:none;
+         background:rgba(8,9,11,.9); border:1px solid var(--edge); padding:14px 16px;
+         font-family:var(--mono); font-size:11px; line-height:1.6; backdrop-filter:blur(8px)}
+  .panel[data-open="1"]{display:block}
+  .panel h3{margin:0 0 10px; font-size:10px; letter-spacing:.2em; text-transform:uppercase;
+            color:var(--safelight); font-weight:500}
+  .panel dl{display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0 0 12px}
+  .panel dt{color:var(--paper-dim); white-space:nowrap}
+  .panel dd{margin:0; overflow-wrap:anywhere}
+  .panel .none{color:var(--paper-dim)}
+
+  .vbar{display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; padding:10px 16px;
+        border-top:1px solid #191b1f; font-family:var(--mono); font-size:11px; color:var(--paper-dim)}
+  .vbar .name{color:var(--paper); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:38vw}
+  .vbar .spacer{flex:1}
+  .icon{background:none; border:1px solid var(--edge); border-radius:2px; padding:5px 10px;
+        font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:var(--paper-dim)}
+  .icon:hover{color:var(--paper); border-color:var(--paper-dim)}
+  .icon[aria-pressed="true"]{color:var(--safelight); border-color:var(--safelight)}
+  .icon[hidden]{display:none}
+  .icon:disabled{opacity:.45; cursor:default}
+
+  .hint{position:fixed; left:50%; bottom:64px; transform:translateX(-50%); z-index:110;
+        font-family:var(--mono); font-size:11px; letter-spacing:.08em; color:var(--paper-dim);
+        background:rgba(0,0,0,.78); border:1px solid var(--edge); padding:6px 12px;
+        opacity:0; transition:opacity .35s; pointer-events:none}
+  .hint.show{opacity:1}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none !important}}
+  @media (max-width:520px){
+    #sheet{grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:18px 10px}
+    .vbar .name{max-width:60vw}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="edge" aria-hidden="true"></div>
+  <div class="bar">
+    <span class="mark">Contact Sheet</span>
+    <button class="btn primary" id="pickBtn">Choose folder</button>
+    <button class="btn" id="pickBtnFS" hidden>Choose folder (keeps permission)</button>
+    <div class="seg" role="group" aria-label="Filter">
+      <button data-filter="all" aria-pressed="true">All</button>
+      <button data-filter="photo" aria-pressed="false">Photos</button>
+      <button data-filter="video" aria-pressed="false">Videos</button>
+    </div>
+    <select id="sort" aria-label="Sort order">
+      <option value="name">Name A–Z</option>
+      <option value="name-desc">Name Z–A</option>
+      <option value="new">Newest first</option>
+      <option value="old">Oldest first</option>
+    </select>
+    <label class="check"><input type="checkbox" id="mergeLive" checked> Merge Live Photos</label>
+    <label class="check"><input type="checkbox" id="showOrig"> Show unedited originals</label>
+    <label class="check"><input type="checkbox" id="fsToggle" checked> Full screen on open</label>
+    <span class="count" id="count"></span>
+  </div>
+  <input type="file" id="picker" webkitdirectory directory multiple hidden>
+</header>
+
+<main>
+  <div class="empty" id="empty">
+    <h1>Point it at a <span>folder</span>.</h1>
+    <p>Everything stays on this machine. Files are read straight from disk, nothing is uploaded or copied.</p>
+    <p>Sidecars and system junk are dropped on the way in, but <code>.AAE</code> files are read first: they tell the sheet which shots were edited and when. Where Photos wrote an edited render (<code>IMG_E1234</code>), that version is shown and the untouched original is folded in behind it.</p>
+    <p>A photo and a <code>.MOV</code> sharing a name are treated as one Live Photo. Its motion can be played back, or averaged into a long exposure right here.</p>
+    <ul>
+      <li><code>←</code> <code>→</code> move · <code>esc</code> closes · <code>space</code> pauses video</li>
+      <li><code>i</code> shows what the sidecar said · <code>l</code> plays motion · <code>s</code> slideshow</li>
+    </ul>
+  </div>
+  <div id="sheet"></div>
+</main>
+
+<div id="viewer" data-open="0" aria-modal="true" role="dialog" aria-label="Full screen viewer">
+  <div class="stage" id="stage">
+    <button class="nav prev" id="prevBtn" aria-label="Previous">←</button>
+    <button class="nav next" id="nextBtn" aria-label="Next">→</button>
+    <aside class="panel" id="panel" data-open="0"></aside>
+  </div>
+  <div class="vbar">
+    <span class="name" id="vName"></span>
+    <span class="spacer"></span>
+    <button class="icon" id="motionBtn" hidden aria-pressed="false">Motion</button>
+    <button class="icon" id="longBtn" hidden>Long exposure</button>
+    <button class="icon" id="saveBtn" hidden>Save PNG</button>
+    <button class="icon" id="infoBtn" aria-pressed="false">Info</button>
+    <button class="icon" id="slideBtn" aria-pressed="false">Slideshow</button>
+    <button class="icon" id="fullBtn">Full screen</button>
+    <button class="icon" id="closeBtn">Close</button>
+  </div>
+</div>
+
+<div class="hint" id="hint"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const IMG = new Set(['jpg','jpeg','jpe','jfif','png','gif','webp','avif','heic','heif','tif','tiff','bmp','apng']);
+  const VID = new Set(['mp4','m4v','mov','webm','ogv','avi','mkv','3gp','mpg','mpeg']);
+
+  const $ = s => document.querySelector(s);
+  const sheet=$('#sheet'), empty=$('#empty'), viewer=$('#viewer'), stage=$('#stage'),
+        picker=$('#picker'), countEl=$('#count'), hintEl=$('#hint'), panel=$('#panel');
+
+  let raw = [];        // every candidate file, pre-grouping
+  let assets = [];     // grouped assets
+  let shown = [];      // filtered + sorted
+  let filter='all', sortBy='name', cursor=-1, slideTimer=null, longBlob=null;
+
+  const collator = new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
+  const fmtSize = b => b>1048576 ? (b/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(b/1024))+' KB';
+  const fmtDate = t => t ? new Date(t).toLocaleString(undefined,
+    {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—';
+
+  /* ============================ binary plist ============================ */
+  function parseBplist(buf){
+    const dv=new DataView(buf), u8=new Uint8Array(buf), n=u8.length;
+    if (n<40) throw 0;
+    const offSize=u8[n-26], refSize=u8[n-25];
+    const numObjs=Number(dv.getBigUint64(n-24)),
+          topObj =Number(dv.getBigUint64(n-16)),
+          tblOff =Number(dv.getBigUint64(n-8));
+    const readN=(p,len)=>{ let v=0; for(let i=0;i<len;i++) v=v*256+u8[p+i]; return v; };
+    const offsets=[]; for(let i=0;i<numObjs;i++) offsets.push(readN(tblOff+i*offSize,offSize));
+    const seen=new Map();
+    function obj(idx){
+      if (seen.has(idx)) return seen.get(idx);
+      let p=offsets[idx]; const m=u8[p], hi=m>>4, lo=m&15; p++;
+      const count=()=>{ if(lo!==0xF) return lo;
+        const im=u8[p++], len=1<<(im&0xF), c=readN(p,len); p+=len; return c; };
+      let out=null;
+      switch(hi){
+        case 0: out = lo===8?false : lo===9?true : null; break;
+        case 1: { const len=1<<lo; out = len<=6 ? readN(p,len) : Number(dv.getBigInt64(p)); break; }
+        case 2: out = (1<<lo)===4 ? dv.getFloat32(p) : dv.getFloat64(p); break;
+        case 3: out = new Date(Date.UTC(2001,0,1)+dv.getFloat64(p)*1000); break;
+        case 4: { const c=count(); out=u8.slice(p,p+c); break; }
+        case 5: { const c=count(); let s=''; for(let i=0;i<c;i++) s+=String.fromCharCode(u8[p+i]); out=s; break; }
+        case 6: { const c=count(); let s=''; for(let i=0;i<c;i++) s+=String.fromCharCode(dv.getUint16(p+i*2)); out=s; break; }
+        case 8: out=readN(p,lo+1); break;
+        case 10: case 12: { const c=count(); out=[]; seen.set(idx,out);
+          for(let i=0;i<c;i++) out.push(obj(readN(p+i*refSize,refSize))); break; }
+        case 13: { const c=count(); out={}; seen.set(idx,out);
+          for(let i=0;i<c;i++){
+            const k=obj(readN(p+i*refSize,refSize));
+            out[String(k)]=obj(readN(p+(c+i)*refSize,refSize));
+          } break; }
+      }
+      seen.set(idx,out); return out;
+    }
+    return obj(topObj);
+  }
+
+  function parseXmlPlist(text){
+    const doc=new DOMParser().parseFromString(text,'application/xml');
+    if (doc.querySelector('parsererror')) throw 0;
+    const root=doc.querySelector('plist > *'); if(!root) throw 0;
+    const b64=s=>{ const bin=atob(s.replace(/\s+/g,'')); const a=new Uint8Array(bin.length);
+                   for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a; };
+    const node=el=>{
+      switch(el.tagName){
+        case 'dict':{ const o={}, k=[...el.children];
+          for(let i=0;i<k.length-1;i+=2) o[k[i].textContent]=node(k[i+1]); return o; }
+        case 'array': return [...el.children].map(node);
+        case 'string': return el.textContent;
+        case 'integer': return parseInt(el.textContent,10);
+        case 'real': return parseFloat(el.textContent);
+        case 'true': return true;
+        case 'false': return false;
+        case 'date': return new Date(el.textContent);
+        case 'data': return b64(el.textContent);
+        default: return null;
+      }
+    };
+    return node(root);
+  }
+
+  /* ============================ AAE reading ============================ */
+  // Effect tokens seen inside decoded adjustmentData, most specific first.
+  const TOKENS = [
+    [/PhotoLongExposure|longExposure/i, 'Long exposure'],
+    [/PhotoLoop/i,'Loop'], [/PhotoBounce/i,'Bounce'],
+    [/slowMotion|slomo/i,'Slo-mo range'], [/trim/i,'Trim'],
+    [/portrait|depth|aperture|fNumber/i,'Portrait / depth'],
+    [/straighten|perspective/i,'Straighten'], [/crop/i,'Crop'],
+    [/vivid|dramatic|silvertone|noir|mono/i,'Filter'],
+    [/whiteBalance|temperature/i,'White balance'],
+    [/exposure|brightness|contrast|shadows|highlights/i,'Light',/longexposure/i],
+    [/saturation|vibran/i,'Colour'], [/sharpen|definition|noiseReduction/i,'Detail'],
+    [/redEye/i,'Red-eye'], [/retouch|heal/i,'Retouch'], [/markup|annotat/i,'Markup'],
+    [/autoEnhance|smartTone|smartColor/i,'Auto enhance'],
+  ];
+
+  function harvest(v, out, depth=0){
+    if (depth>6 || v==null) return out;
+    if (typeof v==='string'){ out.push(v); return out; }
+    if (v instanceof Uint8Array){                       // scan raw bytes for strings
+      let run='';
+      for (const b of v){
+        if (b>=32 && b<127){ run+=String.fromCharCode(b); }
+        else { if(run.length>=4) out.push(run); run=''; }
+      }
+      if (run.length>=4) out.push(run);
+      return out;
+    }
+    if (Array.isArray(v)){ v.forEach(x=>harvest(x,out,depth+1)); return out; }
+    if (typeof v==='object' && !(v instanceof Date)){
+      for (const k in v){ out.push(k); harvest(v[k],out,depth+1); }
+    }
+    return out;
+  }
+
+  async function readAAE(file){
+    const buf = await file.arrayBuffer();
+    const u8 = new Uint8Array(buf);
+    let plist;
+    const magic = String.fromCharCode(...u8.slice(0,6));
+    if (magic==='bplist') plist = parseBplist(buf);
+    else plist = parseXmlPlist(new TextDecoder().decode(u8));
+
+    const info = {
+      when: plist.adjustmentTimestamp instanceof Date ? +plist.adjustmentTimestamp : null,
+      by: plist.adjustmentEditorBundleID || '',
+      format: plist.adjustmentFormatIdentifier || '',
+      version: plist.adjustmentFormatVersion || '',
+      effects: [], strings: [],
+    };
+
+    // adjustmentData is base64 in XML (already bytes here) wrapping another plist
+    let inner = plist.adjustmentData;
+    if (inner instanceof Uint8Array){
+      try{
+        if (String.fromCharCode(...inner.slice(0,6))==='bplist')
+          inner = parseBplist(inner.buffer.slice(inner.byteOffset, inner.byteOffset+inner.byteLength));
+      }catch(_){ /* leave as bytes; harvest() still scans them */ }
+    }
+
+    const words = harvest(inner, harvest({f:info.format}, []));
+    const seen = new Set();
+    for (const [re,label,not] of TOKENS)
+      if (!seen.has(label) && words.some(w => re.test(w) && !(not && not.test(w)))){
+        seen.add(label); info.effects.push(label);
+      }
+    info.strings = [...new Set(words.filter(w=>/^[\w.\-]{4,48}$/.test(w)))].slice(0,40);
+    return info;
+  }
+
+  /* ============================ grouping ============================ */
+  function ingest(files){
+    raw = [];
+    for (const file of files){
+      const path = file.webkitRelativePath || file.name;
+      const base = path.split('/').pop();
+      if (!base || base.startsWith('.')) continue;          // .DS_Store, ._IMG_0001, dotfiles
+      const dot = base.lastIndexOf('.'); if (dot<1) continue;
+      const ext = base.slice(dot+1).toLowerCase();
+      const role = IMG.has(ext) ? 'photo' : VID.has(ext) ? 'video' : ext==='aae' ? 'aae' : null;
+      if (!role) continue;                                   // .xmp, .plist, everything else
+      if (role!=='aae' && !file.size) continue;
+      raw.push({file, path, base, ext, role,
+                stem: base.slice(0,dot),
+                dir: path.slice(0, path.length-base.length),
+                isEdit: /^IMG_E\d/i.test(base)});
+    }
+    group();
+  }
+
+  function group(){
+    const merge = $('#mergeLive').checked, keepOrig = $('#showOrig').checked;
+    const groups = new Map();
+    for (const r of raw){
+      const key = r.dir + r.stem.replace(/^IMG_E(?=\d)/i,'IMG_');
+      let g = groups.get(key);
+      if (!g){ g={photos:[],videos:[],aae:null}; groups.set(key,g); }
+      if (r.role==='photo') g.photos.push(r);
+      else if (r.role==='video') g.videos.push(r);
+      else g.aae = r;
+    }
+
+    const byEditFirst = (a,b) => (b.isEdit?1:0)-(a.isEdit?1:0);
+    assets = [];
+    const push = (kind, rec, extra={}) => assets.push(Object.assign({
+      kind, rec, original:null, motion:null, aae:null, edit:undefined,
+      name:rec.base, path:rec.path, ext:rec.ext,
+      size:rec.file.size, mtime:rec.file.lastModified
+    }, extra));
+
+    for (const g of groups.values()){
+      const photos = g.photos.sort(byEditFirst), videos = g.videos.sort(byEditFirst);
+      if (photos.length){
+        const live = merge && videos.length ? videos[0] : null;
+        push('photo', photos[0], {original: photos[1]||null, motion: live, aae: g.aae});
+        if (keepOrig) photos.slice(1).forEach(p => push('photo', p));
+        videos.slice(live?1:0).forEach(v => push('video', v, {aae:g.aae}));
+      } else if (videos.length){
+        push('video', videos[0], {original: videos[1]||null, aae: g.aae});
+        if (keepOrig) videos.slice(1).forEach(v => push('video', v));
+      }
+    }
+    render();
+    if (!assets.length && raw.length===0) flash('No photos or videos found in that folder');
+    readSidecars();
+  }
+
+  // Parse every sidecar in the background, then repaint the badges.
+  async function readSidecars(){
+    let n = 0;
+    for (const a of assets){
+      if (!a.aae || a.edit !== undefined) continue;
+      try { a.edit = await readAAE(a.aae.file); n++; }
+      catch(_){ a.edit = null; }
+    }
+    if (n){
+      paintTags();
+      if (viewer.dataset.open==='1') paintPanel();
+      flash(`Read ${n} edit sidecar${n===1?'':'s'}`);
+    }
+  }
+
+  /* ============================ sheet ============================ */
+  function render(){
+    stopSlideshow();
+    shown = assets.filter(a => filter==='all' || a.kind===filter);
+    shown.sort((a,b) =>
+      sortBy==='name'      ? collator.compare(a.path,b.path) :
+      sortBy==='name-desc' ? collator.compare(b.path,a.path) :
+      sortBy==='new'       ? b.mtime-a.mtime : a.mtime-b.mtime);
+
+    empty.hidden = assets.length>0;
+    sheet.textContent='';
+    const pad = String(shown.length).length;
+    const frag = document.createDocumentFragment();
+
+    shown.forEach((a,i) => {
+      const cell = document.createElement('button');
+      cell.className='cell'; cell.type='button'; cell.dataset.i=i;
+      cell.setAttribute('aria-label','Open '+a.name);
+      cell.innerHTML = `<div class="well"><div class="marks"></div></div>
+        <div class="stub"><span class="n">${String(i+1).padStart(pad,'0')}</span><span class="nm"></span></div>`;
+      cell.querySelector('.nm').textContent = a.name;
+      cell.addEventListener('click', () => open(i));
+      frag.appendChild(cell);
+      io.observe(cell);
+    });
+    sheet.appendChild(frag);
+    paintTags();
+
+    const p = assets.filter(a=>a.kind==='photo').length,
+          v = assets.length-p,
+          l = assets.filter(a=>a.motion).length,
+          e = assets.filter(a=>a.aae).length;
+    countEl.innerHTML = assets.length
+      ? `<b>${shown.length}</b> shown · ${p} photos · ${v} videos · ${l} live · ${e} edited` : '';
+  }
+
+  function paintTags(){
+    sheet.querySelectorAll('.cell').forEach(cell => {
+      const a = shown[+cell.dataset.i]; if (!a) return;
+      const box = cell.querySelector('.marks');
+      const tags = [];
+      if (a.kind==='video') tags.push(['', '▶ '+a.ext.toUpperCase()]);
+      if (a.motion) tags.push(['live','LIVE']);
+      if (a.aae) tags.push(['edit', a.edit?.effects?.length ? '✎ '+a.edit.effects[0] : '✎ EDITED']);
+      box.innerHTML='';
+      for (const [cls,text] of tags){
+        const s=document.createElement('span'); s.className='tag '+cls; s.textContent=text; box.appendChild(s);
+      }
+    });
+  }
+
+  const io = new IntersectionObserver(es => {
+    for (const e of es) e.isIntersecting ? mount(e.target) : unmount(e.target);
+  }, {rootMargin:'700px 0px'});
+
+  function mount(cell){
+    if (cell.dataset.mounted) return;
+    cell.dataset.mounted='1';
+    const a = shown[+cell.dataset.i]; if (!a) return;
+    const well = cell.querySelector('.well');
+    const url = URL.createObjectURL(a.rec.file); cell._url = url;
+    if (a.kind==='photo'){
+      const img=new Image(); img.decoding='async'; img.alt='';
+      img.onload=()=>well.classList.add('ready');
+      img.onerror=()=>undecodable(well,a.ext);
+      img.src=url; well.prepend(img);
+    } else {
+      const v=document.createElement('video');
+      v.muted=true; v.playsInline=true; v.preload='metadata';
+      v.onloadeddata=()=>well.classList.add('ready');
+      v.onerror=()=>undecodable(well,a.ext);
+      v.src=url+'#t=0.4'; well.prepend(v);
+    }
+  }
+  function unmount(cell){
+    if (!cell.dataset.mounted) return;
+    delete cell.dataset.mounted;
+    const well=cell.querySelector('.well');
+    well.classList.remove('ready');
+    well.querySelectorAll('img,video,.dud').forEach(n=>{ n.removeAttribute('src'); n.remove(); });
+    if (cell._url){ URL.revokeObjectURL(cell._url); cell._url=null; }
+  }
+  function undecodable(host, ext){
+    const d=document.createElement('div'); d.className='dud';
+    d.innerHTML=`<div>${ext.toUpperCase()}</div><div>this browser can't decode it<br>— try Safari</div>`;
+    host.appendChild(d);
+  }
+
+  /* ============================ viewer ============================ */
+  let stageUrl=null, motionOn=false;
+
+  function open(i){
+    cursor=i; viewer.dataset.open='1';
+    document.body.style.overflow='hidden';
+    show();
+    if ($('#fsToggle').checked && !document.fullscreenElement)
+      document.documentElement.requestFullscreen?.().catch(()=>{});
+    $('#closeBtn').focus();
+  }
+
+  function clearStage(){
+    stage.querySelectorAll('img,video,canvas,.dud').forEach(n=>{ n.pause?.(); n.removeAttribute('src'); n.remove(); });
+    if (stageUrl){ URL.revokeObjectURL(stageUrl); stageUrl=null; }
+    if (longBlob){ URL.revokeObjectURL(longBlob); longBlob=null; }
+    $('#saveBtn').hidden=true;
+  }
+
+  function show(){
+    const a = shown[cursor]; if (!a) return;
+    clearStage(); motionOn=false;
+    $('#motionBtn').setAttribute('aria-pressed','false');
+    stageUrl = URL.createObjectURL(a.rec.file);
+
+    if (a.kind==='photo'){
+      const img=new Image(); img.alt=a.name; img.src=stageUrl;
+      img.onerror=()=>undecodable(stage,a.ext);
+      img.onload=()=>{ a.w=img.naturalWidth; a.h=img.naturalHeight; paintPanel(); };
+      stage.prepend(img);
+      if (slideTimer) queueSlide(4000);
+    } else {
+      const v=document.createElement('video');
+      v.src=stageUrl; v.controls=true; v.autoplay=true; v.playsInline=true;
+      v.onerror=()=>undecodable(stage,a.ext);
+      v.onloadedmetadata=()=>{ a.w=v.videoWidth; a.h=v.videoHeight; a.dur=v.duration; paintPanel(); };
+      v.onended=()=>{ if(slideTimer) step(1); };
+      stage.prepend(v); v.play?.().catch(()=>{});
+    }
+
+    $('#motionBtn').hidden = !a.motion;
+    $('#longBtn').hidden   = !a.motion;
+    $('#longBtn').disabled = false;
+    $('#longBtn').textContent = 'Long exposure';
+    $('#vName').textContent = a.path;
+    paintPanel();
+  }
+
+  function paintPanel(){
+    const a = shown[cursor]; if (!a) return;
+    const rows = [
+      ['File', a.name],
+      ['Kind', a.kind==='photo' ? a.ext.toUpperCase()+' photo' : a.ext.toUpperCase()+' video'],
+      ['Pixels', a.w ? `${a.w} × ${a.h}` : '—'],
+      ['Size', fmtSize(a.size)],
+      ['Modified', fmtDate(a.mtime)],
+      ['Position', `${cursor+1} of ${shown.length}`],
+    ];
+    if (a.dur) rows.splice(3,0,['Duration', a.dur.toFixed(1)+' s']);
+    if (a.original) rows.push(['Original', a.original.base]);
+    if (a.motion)   rows.push(['Motion', a.motion.base]);
+
+    let html = `<h3>Frame</h3><dl>` +
+      rows.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('') + `</dl>`;
+
+    html += `<h3>Edit sidecar</h3>`;
+    if (!a.aae) html += `<p class="none">No .AAE — this file was never edited in Photos.</p>`;
+    else if (a.edit === undefined) html += `<p class="none">Reading ${esc(a.aae.base)}…</p>`;
+    else if (a.edit === null) html += `<p class="none">${esc(a.aae.base)} could not be parsed.</p>`;
+    else {
+      const e=a.edit;
+      html += `<dl>` +
+        `<dt>Sidecar</dt><dd>${esc(a.aae.base)}</dd>` +
+        `<dt>Edited</dt><dd>${fmtDate(e.when)}</dd>` +
+        `<dt>By</dt><dd>${esc(e.by||'—')}</dd>` +
+        `<dt>Type</dt><dd>${esc(e.format||'—')} ${esc(e.version||'')}</dd>` +
+        `<dt>Contains</dt><dd>${e.effects.length?esc(e.effects.join(', ')):'unrecognised recipe'}</dd>` +
+        `</dl>`;
+      if (e.strings.length)
+        html += `<p class="none">Keys found: ${esc(e.strings.slice(0,18).join(' · '))}</p>`;
+    }
+    panel.innerHTML = html;
+  }
+  const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+
+  function toggleMotion(){
+    const a=shown[cursor]; if(!a?.motion) return;
+    if (motionOn){ show(); return; }
+    clearStage(); motionOn=true;
+    $('#motionBtn').setAttribute('aria-pressed','true');
+    stageUrl = URL.createObjectURL(a.motion.file);
+    const v=document.createElement('video');
+    v.src=stageUrl; v.autoplay=true; v.loop=true; v.muted=true; v.playsInline=true; v.controls=true;
+    v.onerror=()=>undecodable(stage,'MOV');
+    stage.prepend(v); v.play?.().catch(()=>{});
+  }
+
+  /* Long exposure: average every frame of the Live Photo clip, the way Photos does. */
+  async function renderLongExposure(){
+    const a=shown[cursor]; if(!a?.motion) return;
+    const btn=$('#longBtn'); btn.disabled=true;
+    const url=URL.createObjectURL(a.motion.file);
+    const v=document.createElement('video');
+    v.muted=true; v.playsInline=true; v.preload='auto'; v.src=url;
+    const once=(el,ev)=>new Promise((res,rej)=>{ el.addEventListener(ev,res,{once:true});
+                                                 el.addEventListener('error',rej,{once:true}); });
+    try{
+      await once(v,'loadedmetadata');
+      const dur=v.duration||1;
+      const w=Math.min(v.videoWidth||1280,1440), h=Math.round((v.videoHeight/v.videoWidth)*w);
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      const ctx=cv.getContext('2d',{willReadFrequently:true});
+      const N=Math.max(12, Math.min(48, Math.round(dur*15)));
+      const acc=new Float32Array(w*h*4);
+      for (let i=0;i<N;i++){
+        v.currentTime = dur*(i+0.5)/N;
+        await once(v,'seeked');
+        ctx.drawImage(v,0,0,w,h);
+        const d=ctx.getImageData(0,0,w,h).data;
+        for (let k=0;k<acc.length;k++) acc[k]+=d[k];
+        btn.textContent = 'Averaging '+Math.round((i+1)/N*100)+'%';
+      }
+      const out=ctx.createImageData(w,h);
+      for (let k=0;k<acc.length;k+=4){
+        out.data[k]  =acc[k]/N; out.data[k+1]=acc[k+1]/N;
+        out.data[k+2]=acc[k+2]/N; out.data[k+3]=255;
+      }
+      ctx.putImageData(out,0,0);
+      clearStage();
+      cv.style.cssText='';                       // inherits the stage fit rules
+      stage.prepend(cv);
+      longBlob = cv.toDataURL('image/png');
+      $('#saveBtn').hidden=false;
+      btn.textContent='Long exposure'; btn.disabled=false;
+      flash(`Averaged ${N} frames from ${a.motion.base}`);
+    }catch(_){
+      btn.textContent='Long exposure'; btn.disabled=false;
+      flash("Couldn't decode that clip — Safari handles HEVC .MOV best");
+    }finally{ URL.revokeObjectURL(url); }
+  }
+
+  function step(d){ if(!shown.length) return; cursor=(cursor+d+shown.length)%shown.length; show(); }
+  function close(){
+    viewer.dataset.open='0'; document.body.style.overflow='';
+    stopSlideshow(); clearStage();
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(()=>{});
+    sheet.querySelector(`.cell[data-i="${cursor}"]`)?.focus();
+  }
+  function queueSlide(ms){ clearTimeout(slideTimer); slideTimer=setTimeout(()=>step(1),ms); }
+  function startSlideshow(){ slideTimer=setTimeout(()=>step(1),4000); $('#slideBtn').setAttribute('aria-pressed','true'); }
+  function stopSlideshow(){ clearTimeout(slideTimer); slideTimer=null; $('#slideBtn')?.setAttribute('aria-pressed','false'); }
+  function flash(msg){
+    hintEl.textContent=msg; hintEl.classList.add('show');
+    clearTimeout(flash._t); flash._t=setTimeout(()=>hintEl.classList.remove('show'),2800);
+  }
+
+  /* ============================ wiring ============================ */
+  $('#pickBtn').addEventListener('click', ()=>picker.click());
+  picker.addEventListener('change', e=>ingest(e.target.files));
+
+  async function walk(handle, prefix, out){
+    for await (const entry of handle.values()){
+      const path = prefix ? prefix+'/'+entry.name : entry.name;
+      if (entry.kind==='directory'){ if(!entry.name.startsWith('.')) await walk(entry,path,out); }
+      else { const f=await entry.getFile(); Object.defineProperty(f,'webkitRelativePath',{value:path}); out.push(f); }
+    }
+  }
+  if (window.showDirectoryPicker && location.protocol!=='file:'){
+    const b=$('#pickBtnFS'); b.hidden=false;
+    b.addEventListener('click', async ()=>{
+      try{
+        const dir=await window.showDirectoryPicker({id:'photos',mode:'read'});
+        const out=[]; await walk(dir,'',out); ingest(out);
+      }catch(err){ if(err.name!=='AbortError') flash('Could not read that folder'); }
+    });
+  }
+
+  document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>{
+    filter=b.dataset.filter;
+    document.querySelectorAll('.seg button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    render();
+  }));
+  $('#sort').addEventListener('change', e=>{ sortBy=e.target.value; render(); });
+  $('#mergeLive').addEventListener('change', group);
+  $('#showOrig').addEventListener('change', group);
+
+  $('#prevBtn').addEventListener('click',()=>step(-1));
+  $('#nextBtn').addEventListener('click',()=>step(1));
+  $('#closeBtn').addEventListener('click', close);
+  $('#motionBtn').addEventListener('click', toggleMotion);
+  $('#longBtn').addEventListener('click', renderLongExposure);
+  $('#saveBtn').addEventListener('click', ()=>{
+    if(!longBlob) return;
+    const a=document.createElement('a');
+    a.href=longBlob; a.download=(shown[cursor]?.name||'frame').replace(/\.\w+$/,'')+'-longexposure.png';
+    a.click();
+  });
+  $('#infoBtn').addEventListener('click', ()=>{
+    const on = panel.dataset.open==='1' ? '0':'1';
+    panel.dataset.open=on; $('#infoBtn').setAttribute('aria-pressed',on==='1');
+    if (on==='1') paintPanel();
+  });
+  $('#slideBtn').addEventListener('click', ()=> slideTimer?stopSlideshow():startSlideshow());
+  $('#fullBtn').addEventListener('click', ()=>{
+    document.fullscreenElement ? document.exitFullscreen()
+                               : document.documentElement.requestFullscreen?.().catch(()=>{});
+  });
+
+  document.addEventListener('keydown', e=>{
+    if (viewer.dataset.open!=='1') return;
+    const k=e.key;
+    if (k==='Escape') close();
+    else if (k==='ArrowRight'||k==='ArrowDown'){ e.preventDefault(); step(1); }
+    else if (k==='ArrowLeft' ||k==='ArrowUp'){ e.preventDefault(); step(-1); }
+    else if (k===' '){ const v=stage.querySelector('video'); if(v){ e.preventDefault(); v.paused?v.play():v.pause(); } }
+    else if (k==='i'||k==='I') $('#infoBtn').click();
+    else if (k==='l'||k==='L') toggleMotion();
+    else if (k==='f'||k==='F') $('#fullBtn').click();
+    else if (k==='s'||k==='S') $('#slideBtn').click();
+  });
+
+  let tx=0,ty=0;
+  stage.addEventListener('touchstart', e=>{ tx=e.touches[0].clientX; ty=e.touches[0].clientY; },{passive:true});
+  stage.addEventListener('touchend', e=>{
+    const dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty;
+    if (Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)) step(dx<0?1:-1);
+  },{passive:true});
+
+  document.addEventListener('dragover', e=>e.preventDefault());
+  document.addEventListener('drop', async e=>{
+    e.preventDefault();
+    const out=[];
+    for (const it of e.dataTransfer.items){
+      const h = it.getAsFileSystemHandle ? await it.getAsFileSystemHandle() : null;
+      if (h?.kind==='directory') await walk(h, h.name, out);
+    }
+    if (out.length) ingest(out); else flash('Drop a folder — or use Choose folder');
+  });
+})();
+</script>
+</body>
+</html>
